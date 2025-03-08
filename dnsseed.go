@@ -10,6 +10,7 @@ import (
 	"github.com/kaspanet/kaspad/app/protocol/common"
 	"net"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -123,7 +124,7 @@ func creep() {
 			go func(addr *appmessage.NetAddress) {
 				defer wgCreep.Done()
 
-				err := pollPeer(netAdapters[i % len(netAdapters)], addr)
+				err := pollPeer(netAdapters[i%len(netAdapters)], addr)
 				if err != nil {
 					log.Debugf(err.Error())
 					if defaultSeeder != nil && addr == defaultSeeder {
@@ -164,9 +165,20 @@ func pollPeer(netAdapter *netadapter.DnsseedNetAdapter, addr *appmessage.NetAddr
 	log.Infof("Peer %s (%s) sent %d addresses, %d new",
 		peerAddress, msgVersion.UserAgent, len(msgAddresses.AddressList), added)
 
-	amgr.Good(addr, &msgVersion.UserAgent, nil)
-
-	return nil
+	re := regexp.MustCompile(`kaspad:(\d+\.\d+\.\d+)`)
+	match := re.FindStringSubmatch(msgVersion.UserAgent)
+	if len(match) > 1 {
+		versionNr := match[1]
+		versionParts := strings.Split(versionNr, ".")
+		if len(versionParts) == 3 {
+			minor, _ := strconv.Atoi(versionParts[1])
+			if minor >= 17 {
+				amgr.Good(addr, &msgVersion.UserAgent, nil)
+				return nil
+			}
+		}
+	}
+	return errors.Wrapf(err, "Peer %s has unsupported user agent: %s", peerAddress, msgVersion.UserAgent)
 }
 
 func newNetAdapter() *netadapter.DnsseedNetAdapter {
@@ -215,7 +227,7 @@ func main() {
 
 		// Try to split seeder host and port
 		foundIp, foundPort, err := net.SplitHostPort(cfg.Seeder)
-		if (err == nil) {
+		if err == nil {
 			seederIp = foundIp
 			seederPort, err = strconv.Atoi(foundPort)
 			if err != nil {
